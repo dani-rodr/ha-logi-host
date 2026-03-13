@@ -21,6 +21,7 @@ from .constants import (
     CHANGE_HOST_FN_SET,
     FEATURE_CHANGE_HOST,
     FEATURE_DEVICE_TYPE_AND_NAME,
+    FEATURE_HOSTS_INFO,
     FEATURE_ROOT,
     MAX_SLOT,
     MIN_SLOT,
@@ -236,6 +237,49 @@ def send_change_host(
         transport.write(msg)
     except Exception as e:
         raise TransportError(f"send_change_host failed: {e}") from e
+
+
+def get_current_host(
+    transport: HIDTransport,
+    devnumber: int,
+    hosts_info_feat_idx: int,
+) -> int | None:
+    """Query the current host number via HOSTS_INFO (0x1815) getHostInfo [fn 0].
+
+    Returns host number (1-based: 1, 2, or 3), or None on failure/timeout.
+
+    The response format is:
+      byte[0]: capability flags
+      byte[1]: reserved
+      byte[2]: numHosts
+      byte[3]: currentHost (0-based)
+    """
+    request_id = (hosts_info_feat_idx << 8) | 0x00  # function [0]: getHostInfo
+    reply = request(transport, devnumber, request_id, timeout=500)
+    if reply and len(reply) >= 4:
+        current_host_0based = reply[3]
+        return current_host_0based + 1
+    return None
+
+
+def is_reconnection_event(raw: bytes | None, devnumber: int) -> bool:
+    """Check if a raw HID++ packet is a reconnection notification for *devnumber*.
+
+    Reconnection is signalled by the Wireless Device Status feature (0x1D4B):
+      report 0x11 (long), byte[2]=0x04 (feature index), byte[4]=0x01 (reconnected).
+
+    Note: byte[2] is the feature *index* of the Wireless Device Status feature,
+    which is typically 0x04 on Unifying receivers (but could vary). We match on
+    the pattern: report=0x11, slot matches, feature_idx=0x04, status byte=0x01.
+    """
+    if not raw or len(raw) < 5:
+        return False
+    return (
+        raw[0] == REPORT_LONG
+        and raw[1] == devnumber
+        and raw[2] == 0x04  # Wireless Device Status feature index
+        and raw[4] == 0x01  # status: reconnected
+    )
 
 
 # -- High-level discovery ------------------------------------------------------

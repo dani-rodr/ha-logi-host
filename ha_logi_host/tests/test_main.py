@@ -176,6 +176,8 @@ class TestRunWithDevicePath:
         mock_transport = MagicMock()
         mocker.patch("logi_host.main.HIDTransport", return_value=mock_transport)
         mocker.patch("logi_host.main.find_mouse", return_value=(1, "MX Master 3", 0x0A))
+        mocker.patch("logi_host.main.resolve_feature_index", return_value=0x0B)
+        mocker.patch("logi_host.main.get_current_host", return_value=3)
 
         call_count = 0
 
@@ -257,6 +259,8 @@ class TestRunSuccess:
 
         # Mouse found in slot 2
         mocker.patch("logi_host.main.find_mouse", return_value=(2, "MX Master 3", 0x07))
+        mocker.patch("logi_host.main.resolve_feature_index", return_value=0x0B)
+        mocker.patch("logi_host.main.get_current_host", return_value=3)
 
         # Transport health check succeeds once, then shutdown
         call_count = 0
@@ -281,6 +285,152 @@ class TestRunSuccess:
         mock_mqtt.start.assert_called_once()
         mock_mqtt.stop.assert_called_once()
 
+    def test_publishes_initial_host_on_startup(self, mocker):
+        """When HOSTS_INFO is supported, current host should be published on startup."""
+        mocker.patch.dict(
+            "os.environ",
+            {"MQTT_HOST": "broker", "MQTT_PORT": "1883", "RECEIVER_TYPE": "unifying", "LOG_LEVEL": "info"},
+        )
+        mocker.patch("logi_host.main._setup_logging")
+
+        mock_mqtt = MagicMock()
+        mocker.patch("logi_host.main.MQTTBridge", return_value=mock_mqtt)
+
+        mock_receiver = MagicMock()
+        mock_receiver.path = b"/dev/hidraw0"
+        mock_receiver.receiver_type = "unifying"
+        mock_receiver.pid = 0xC52B
+        mocker.patch("logi_host.main.enumerate_receivers", return_value=[mock_receiver])
+
+        mock_transport = MagicMock()
+        mocker.patch("logi_host.main.HIDTransport", return_value=mock_transport)
+
+        mocker.patch("logi_host.main.find_mouse", return_value=(1, "MX Master 3", 0x0A))
+        mocker.patch("logi_host.main.resolve_feature_index", return_value=0x0B)
+        mocker.patch("logi_host.main.get_current_host", return_value=3)
+        mocker.patch("logi_host.main.is_reconnection_event", return_value=False)
+
+        call_count = 0
+
+        def fake_is_set():
+            nonlocal call_count
+            call_count += 1
+            return call_count > 1
+
+        mock_shutdown = MagicMock()
+        mock_shutdown.is_set = fake_is_set
+        mock_shutdown.wait = MagicMock(return_value=False)
+        mocker.patch("logi_host.main.threading.Event", return_value=mock_shutdown)
+        mocker.patch("logi_host.main.signal.signal")
+        mock_transport.read.return_value = None
+
+        run()
+
+        # Should publish initial host state = 3
+        mock_mqtt.publish_host.assert_called_with(3)
+
+    def test_no_initial_host_when_hosts_info_unsupported(self, mocker):
+        """When HOSTS_INFO is not supported, no initial host should be published."""
+        mocker.patch.dict(
+            "os.environ",
+            {"MQTT_HOST": "broker", "MQTT_PORT": "1883", "RECEIVER_TYPE": "unifying", "LOG_LEVEL": "info"},
+        )
+        mocker.patch("logi_host.main._setup_logging")
+
+        mock_mqtt = MagicMock()
+        mocker.patch("logi_host.main.MQTTBridge", return_value=mock_mqtt)
+
+        mock_receiver = MagicMock()
+        mock_receiver.path = b"/dev/hidraw0"
+        mock_receiver.receiver_type = "unifying"
+        mock_receiver.pid = 0xC52B
+        mocker.patch("logi_host.main.enumerate_receivers", return_value=[mock_receiver])
+
+        mock_transport = MagicMock()
+        mocker.patch("logi_host.main.HIDTransport", return_value=mock_transport)
+
+        mocker.patch("logi_host.main.find_mouse", return_value=(1, "MX Master 3", 0x0A))
+        # HOSTS_INFO not supported
+        mocker.patch("logi_host.main.resolve_feature_index", return_value=None)
+
+        call_count = 0
+
+        def fake_is_set():
+            nonlocal call_count
+            call_count += 1
+            return call_count > 1
+
+        mock_shutdown = MagicMock()
+        mock_shutdown.is_set = fake_is_set
+        mock_shutdown.wait = MagicMock(return_value=False)
+        mocker.patch("logi_host.main.threading.Event", return_value=mock_shutdown)
+        mocker.patch("logi_host.main.signal.signal")
+        mock_transport.read.return_value = None
+
+        run()
+
+        # publish_host should NOT have been called (no initial host)
+        mock_mqtt.publish_host.assert_not_called()
+
+
+class TestRunReconnectionDetection:
+    """Test that reconnection events in the idle loop trigger host re-query."""
+
+    def test_reconnection_event_publishes_host(self, mocker):
+        mocker.patch.dict(
+            "os.environ",
+            {"MQTT_HOST": "broker", "MQTT_PORT": "1883", "RECEIVER_TYPE": "unifying", "LOG_LEVEL": "info"},
+        )
+        mocker.patch("logi_host.main._setup_logging")
+
+        mock_mqtt = MagicMock()
+        mocker.patch("logi_host.main.MQTTBridge", return_value=mock_mqtt)
+
+        mock_receiver = MagicMock()
+        mock_receiver.path = b"/dev/hidraw0"
+        mock_receiver.receiver_type = "unifying"
+        mock_receiver.pid = 0xC52B
+        mocker.patch("logi_host.main.enumerate_receivers", return_value=[mock_receiver])
+
+        mock_transport = MagicMock()
+        mocker.patch("logi_host.main.HIDTransport", return_value=mock_transport)
+
+        mocker.patch("logi_host.main.find_mouse", return_value=(1, "MX Master 3", 0x0A))
+        mocker.patch("logi_host.main.resolve_feature_index", return_value=0x0B)
+
+        # First get_current_host call (startup) returns 3,
+        # second call (after reconnection) returns 3
+        mock_get_host = mocker.patch("logi_host.main.get_current_host", side_effect=[3, 3])
+
+        # First read returns a reconnection packet, second read returns None
+        reconnect_packet = b"\x11\x01\x04\x00\x01" + b"\x00" * 15
+        mock_transport.read.side_effect = [reconnect_packet, None]
+
+        # is_reconnection_event: first call (for reconnect_packet) returns True,
+        # second call (for None) returns False
+        mock_is_recon = mocker.patch("logi_host.main.is_reconnection_event", side_effect=[True, False])
+
+        call_count = 0
+
+        def fake_is_set():
+            nonlocal call_count
+            call_count += 1
+            return call_count > 2  # two iterations of the idle loop
+
+        mock_shutdown = MagicMock()
+        mock_shutdown.is_set = fake_is_set
+        mock_shutdown.wait = MagicMock(return_value=False)
+        mocker.patch("logi_host.main.threading.Event", return_value=mock_shutdown)
+        mocker.patch("logi_host.main.signal.signal")
+
+        run()
+
+        # get_current_host should be called twice: once at startup, once on reconnect
+        assert mock_get_host.call_count == 2
+        # publish_host should be called twice: once for initial host, once for reconnect
+        assert mock_mqtt.publish_host.call_count == 2
+        mock_mqtt.publish_host.assert_called_with(3)
+
 
 class TestRunTransportError:
     """Test reconnect on transport error."""
@@ -304,6 +454,7 @@ class TestRunTransportError:
         mock_transport = MagicMock()
         mocker.patch("logi_host.main.HIDTransport", return_value=mock_transport)
         mocker.patch("logi_host.main.find_mouse", return_value=(2, "MX Master 3", 0x07))
+        mocker.patch("logi_host.main.resolve_feature_index", return_value=None)
 
         # First read raises TransportError, then shutdown
         mock_transport.read.side_effect = TransportError("device gone")

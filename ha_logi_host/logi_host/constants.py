@@ -40,6 +40,7 @@ SW_ID = 0x08
 FEATURE_ROOT = 0x0000  # IRoot: look up feature index by code
 FEATURE_DEVICE_TYPE_AND_NAME = 0x0005  # getDeviceType(), getDeviceName()
 FEATURE_CHANGE_HOST = 0x1814  # SetCurrentHost — switch to another host
+FEATURE_HOSTS_INFO = 0x1815  # getHostInfo — query current host, number of hosts
 
 # CHANGE_HOST function code (upper nibble of function byte)
 CHANGE_HOST_FN_SET = 0x10  # SetCurrentHost — fire-and-forget, no reply

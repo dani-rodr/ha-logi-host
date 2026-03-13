@@ -21,8 +21,10 @@ from logi_host.protocol import (
     _is_relevant,
     _pack_params,
     find_mouse,
+    get_current_host,
     get_device_name,
     get_device_type,
+    is_reconnection_event,
     request,
     resolve_feature_index,
     send_change_host,
@@ -415,3 +417,79 @@ class TestFindMouse:
         result = find_mouse(fake_transport)
         assert result is not None
         assert result[1] == "MX Ergo"
+
+
+class TestGetCurrentHost:
+    """Tests for get_current_host() — querying HOSTS_INFO (0x1815)."""
+
+    def test_returns_1based_host_on_success(self, make_fake_transport):
+        """Reply byte[3] = 2 (0-based) → returns 3 (1-based)."""
+        hosts_info_idx = 0x0B
+        request_id = (hosts_info_idx << 8) | 0x00 | SW_ID
+        # Reply: capability_flags=0x03, reserved=0x00, numHosts=3, currentHost=2 (0-based)
+        reply = _make_long_reply(0x01, request_id, b"\x03\x00\x03\x02")
+        transport = make_fake_transport(responses=[reply])
+        result = get_current_host(transport, 0x01, hosts_info_idx)
+        assert result == 3
+
+    def test_returns_host_1_for_0based_0(self, make_fake_transport):
+        """Reply byte[3] = 0 (0-based) → returns 1 (1-based)."""
+        hosts_info_idx = 0x0B
+        request_id = (hosts_info_idx << 8) | 0x00 | SW_ID
+        reply = _make_long_reply(0x01, request_id, b"\x03\x00\x03\x00")
+        transport = make_fake_transport(responses=[reply])
+        result = get_current_host(transport, 0x01, hosts_info_idx)
+        assert result == 1
+
+    def test_returns_none_on_timeout(self, make_fake_transport):
+        """No reply → returns None."""
+        transport = make_fake_transport(responses=[])
+        result = get_current_host(transport, 0x01, 0x0B)
+        assert result is None
+
+    def test_returns_none_when_request_fails(self, make_fake_transport, mocker):
+        """If the underlying request() returns None, get_current_host returns None."""
+        mocker.patch("logi_host.protocol.request", return_value=None)
+        transport = make_fake_transport()
+        result = get_current_host(transport, 0x01, 0x0B)
+        assert result is None
+
+
+class TestIsReconnectionEvent:
+    """Tests for is_reconnection_event() — detecting mouse reconnection."""
+
+    def test_valid_reconnection_event(self):
+        """Standard reconnection: report=0x11, slot=1, feat_idx=0x04, byte[4]=0x01."""
+        raw = bytes([REPORT_LONG, 0x01, 0x04, 0x00, 0x01]) + b"\x00" * 15
+        assert is_reconnection_event(raw, 0x01) is True
+
+    def test_wrong_device_number(self):
+        """Reconnection for slot 2 should not match slot 1."""
+        raw = bytes([REPORT_LONG, 0x02, 0x04, 0x00, 0x01]) + b"\x00" * 15
+        assert is_reconnection_event(raw, 0x01) is False
+
+    def test_wrong_report_id(self):
+        """Short report (0x10) is not a reconnection event."""
+        raw = bytes([REPORT_SHORT, 0x01, 0x04, 0x00, 0x01, 0x00, 0x00])
+        assert is_reconnection_event(raw, 0x01) is False
+
+    def test_wrong_feature_index(self):
+        """Feature index 0x05 is not the Wireless Device Status feature."""
+        raw = bytes([REPORT_LONG, 0x01, 0x05, 0x00, 0x01]) + b"\x00" * 15
+        assert is_reconnection_event(raw, 0x01) is False
+
+    def test_wrong_status_byte(self):
+        """Status byte 0x00 (disconnected) is not a reconnection."""
+        raw = bytes([REPORT_LONG, 0x01, 0x04, 0x00, 0x00]) + b"\x00" * 15
+        assert is_reconnection_event(raw, 0x01) is False
+
+    def test_empty_bytes(self):
+        assert is_reconnection_event(b"", 0x01) is False
+
+    def test_none_bytes(self):
+        assert is_reconnection_event(None, 0x01) is False
+
+    def test_too_short(self):
+        """Packet shorter than 5 bytes cannot be a reconnection event."""
+        raw = bytes([REPORT_LONG, 0x01, 0x04, 0x00])
+        assert is_reconnection_event(raw, 0x01) is False

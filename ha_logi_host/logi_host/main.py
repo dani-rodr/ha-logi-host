@@ -18,8 +18,9 @@ import signal
 import sys
 import threading
 
+from .constants import FEATURE_HOSTS_INFO
 from .mqtt import MQTTBridge
-from .protocol import find_mouse, send_change_host
+from .protocol import find_mouse, get_current_host, is_reconnection_event, resolve_feature_index, send_change_host
 from .transport import HIDTransport, TransportError, enumerate_receivers
 
 log = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ def run() -> None:
     mouse_slot: int | None = None
     mouse_name: str | None = None
     change_host_feat_idx: int | None = None
+    hosts_info_feat_idx: int | None = None
 
     def _handle_host_switch(target_host: int) -> None:
         """Called by MQTT when HA sends a host-switch command (1-based)."""
@@ -93,7 +95,7 @@ def run() -> None:
             _close_transport()
 
     def _close_transport() -> None:
-        nonlocal transport, mouse_slot, change_host_feat_idx
+        nonlocal transport, mouse_slot, change_host_feat_idx, hosts_info_feat_idx
         if transport:
             try:
                 transport.close()
@@ -102,6 +104,7 @@ def run() -> None:
             transport = None
         mouse_slot = None
         change_host_feat_idx = None
+        hosts_info_feat_idx = None
 
     # -- Main loop: discover → probe → serve → reconnect -----------------------
 
@@ -174,6 +177,22 @@ def run() -> None:
                     change_host_feat_idx,
                 )
 
+                # Resolve HOSTS_INFO (0x1815) for querying current host
+                hosts_info_feat_idx = resolve_feature_index(transport, mouse_slot, FEATURE_HOSTS_INFO)
+                if hosts_info_feat_idx:
+                    log.info("HOSTS_INFO feature at index 0x%02X", hosts_info_feat_idx)
+                else:
+                    log.debug("HOSTS_INFO (0x1815) not supported — cannot query current host")
+
+                # Query current host before connecting MQTT
+                initial_host: int | None = None
+                if hosts_info_feat_idx:
+                    initial_host = get_current_host(transport, mouse_slot, hosts_info_feat_idx)
+                    if initial_host:
+                        log.info("Current host: %d", initial_host)
+                    else:
+                        log.warning("Could not query current host")
+
                 # Now that we know the mouse name, (re)connect MQTT with it
                 try:
                     mqtt_bridge.connect(mouse_name=mouse_name)
@@ -183,14 +202,25 @@ def run() -> None:
                     shutdown.wait(RECONNECT_INTERVAL)
                     continue
 
+                # Publish initial host state so the HA select entity shows the correct value
+                if initial_host and mqtt_bridge:
+                    mqtt_bridge.publish_host(initial_host)
+
             # -- Step 3: Idle — wait for MQTT commands or shutdown --------------
             # The MQTT loop runs in a background thread (via paho loop_start).
             # We just need to stay alive and periodically verify the transport
             # is still healthy by doing a non-blocking read.
             try:
-                # Read with a short timeout — discards any unsolicited messages
-                # (notifications, connection events, etc.) and acts as a health check.
-                transport.read(timeout=2000)
+                raw = transport.read(timeout=2000)
+
+                # Detect mouse reconnection → re-query and publish current host
+                if raw and mouse_slot is not None and is_reconnection_event(raw, mouse_slot):
+                    log.info("Mouse reconnected to receiver")
+                    if hosts_info_feat_idx and mqtt_bridge:
+                        host = get_current_host(transport, mouse_slot, hosts_info_feat_idx)
+                        if host:
+                            log.info("Current host after reconnection: %d", host)
+                            mqtt_bridge.publish_host(host)
             except TransportError as e:
                 log.warning("Transport error (receiver disconnected?): %s", e)
                 _close_transport()
