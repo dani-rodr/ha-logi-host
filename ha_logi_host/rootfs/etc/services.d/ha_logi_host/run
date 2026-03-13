@@ -3,6 +3,15 @@
 
 bashio::log.info "Starting Logi Host Switch..."
 
+# Debug: show hidraw device permissions
+bashio::log.info "hidraw devices:"
+for dev in /dev/hidraw*; do
+    if [ -e "$dev" ]; then
+        bashio::log.info "  $(ls -la "$dev")"
+    fi
+done
+bashio::log.info "Running as: $(id)"
+
 export MQTT_HOST="$(bashio::services mqtt 'host')"
 export MQTT_PORT="$(bashio::services mqtt 'port')"
 export MQTT_USER="$(bashio::services mqtt 'username')"
