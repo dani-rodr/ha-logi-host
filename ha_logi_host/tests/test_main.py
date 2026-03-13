@@ -68,6 +68,41 @@ class TestRunNoReceiver:
         # Should have published offline status
         mock_mqtt.publish_status.assert_called_with("offline")
 
+    def test_retries_with_device_path_not_found(self, mocker):
+        """When DEVICE_PATH is set but no receiver matches, show helpful message."""
+        mocker.patch.dict(
+            "os.environ",
+            {
+                "MQTT_HOST": "localhost",
+                "MQTT_PORT": "1883",
+                "RECEIVER_TYPE": "unifying",
+                "LOG_LEVEL": "warning",
+                "DEVICE_PATH": "/dev/hidraw5",
+            },
+        )
+        mocker.patch("logi_host.main._setup_logging")
+
+        mock_mqtt = MagicMock()
+        mocker.patch("logi_host.main.MQTTBridge", return_value=mock_mqtt)
+        mock_enum = mocker.patch("logi_host.main.enumerate_receivers", return_value=[])
+
+        call_count = 0
+
+        def fake_wait(timeout=None):
+            nonlocal call_count
+            call_count += 1
+            return False
+
+        mock_shutdown = MagicMock()
+        mock_shutdown.is_set = lambda: call_count >= 1
+        mock_shutdown.wait = fake_wait
+        mocker.patch("logi_host.main.threading.Event", return_value=mock_shutdown)
+
+        run()
+
+        # enumerate_receivers should have been called with path_filter
+        mock_enum.assert_called_with(receiver_type="unifying", path_filter=b"/dev/hidraw5")
+
 
 class TestRunNoMouse:
     """Test the main loop when receiver found but no mouse."""
@@ -111,6 +146,91 @@ class TestRunNoMouse:
 
         # find_mouse should have been called
         assert mock_find.call_count >= 1
+
+
+class TestRunWithDevicePath:
+    """Test the main loop when DEVICE_PATH is configured."""
+
+    def test_device_path_passed_to_enumerate(self, mocker):
+        mocker.patch.dict(
+            "os.environ",
+            {
+                "MQTT_HOST": "broker",
+                "MQTT_PORT": "1883",
+                "RECEIVER_TYPE": "unifying",
+                "LOG_LEVEL": "info",
+                "DEVICE_PATH": "/dev/hidraw2",
+            },
+        )
+        mocker.patch("logi_host.main._setup_logging")
+
+        mock_mqtt = MagicMock()
+        mocker.patch("logi_host.main.MQTTBridge", return_value=mock_mqtt)
+
+        mock_receiver = MagicMock()
+        mock_receiver.path = b"/dev/hidraw2"
+        mock_receiver.receiver_type = "unifying"
+        mock_receiver.pid = 0xC52B
+        mock_enum = mocker.patch("logi_host.main.enumerate_receivers", return_value=[mock_receiver])
+
+        mock_transport = MagicMock()
+        mocker.patch("logi_host.main.HIDTransport", return_value=mock_transport)
+        mocker.patch("logi_host.main.find_mouse", return_value=(1, "MX Master 3", 0x0A))
+
+        call_count = 0
+
+        def fake_is_set():
+            nonlocal call_count
+            call_count += 1
+            return call_count > 1
+
+        mock_shutdown = MagicMock()
+        mock_shutdown.is_set = fake_is_set
+        mock_shutdown.wait = MagicMock(return_value=False)
+        mocker.patch("logi_host.main.threading.Event", return_value=mock_shutdown)
+        mocker.patch("logi_host.main.signal.signal")
+        mock_transport.read.return_value = None
+
+        run()
+
+        # enumerate_receivers should have been called with path_filter
+        mock_enum.assert_called_with(receiver_type="unifying", path_filter=b"/dev/hidraw2")
+        mock_mqtt.connect.assert_called_once_with(mouse_name="MX Master 3")
+
+    def test_empty_device_path_uses_autodiscovery(self, mocker):
+        """Empty DEVICE_PATH should behave like no DEVICE_PATH."""
+        mocker.patch.dict(
+            "os.environ",
+            {
+                "MQTT_HOST": "broker",
+                "MQTT_PORT": "1883",
+                "RECEIVER_TYPE": "unifying",
+                "LOG_LEVEL": "info",
+                "DEVICE_PATH": "",
+            },
+        )
+        mocker.patch("logi_host.main._setup_logging")
+
+        mock_mqtt = MagicMock()
+        mocker.patch("logi_host.main.MQTTBridge", return_value=mock_mqtt)
+        mock_enum = mocker.patch("logi_host.main.enumerate_receivers", return_value=[])
+
+        call_count = 0
+
+        def fake_wait(timeout=None):
+            nonlocal call_count
+            call_count += 1
+            return False
+
+        mock_shutdown = MagicMock()
+        mock_shutdown.is_set = lambda: call_count >= 1
+        mock_shutdown.wait = fake_wait
+        mocker.patch("logi_host.main.threading.Event", return_value=mock_shutdown)
+
+        run()
+
+        # Should call without path_filter (None)
+        mock_enum.assert_called_with(receiver_type="unifying", path_filter=None)
 
 
 class TestRunSuccess:

@@ -49,9 +49,13 @@ def run() -> None:
     mqtt_pass = os.environ.get("MQTT_PASS") or None
     receiver_type = os.environ.get("RECEIVER_TYPE", "unifying")
     log_level = os.environ.get("LOG_LEVEL", "info")
+    device_path = os.environ.get("DEVICE_PATH") or None
 
     _setup_logging(log_level)
-    log.info("ha-logi-host starting (receiver_type=%s)", receiver_type)
+    if device_path:
+        log.info("ha-logi-host starting (receiver_type=%s, device_path=%s)", receiver_type, device_path)
+    else:
+        log.info("ha-logi-host starting (receiver_type=%s, auto-discover)", receiver_type)
 
     # -- Shutdown signal -------------------------------------------------------
     shutdown = threading.Event()
@@ -114,15 +118,28 @@ def run() -> None:
         while not shutdown.is_set():
             # -- Step 1: Find the receiver -------------------------------------
             if transport is None:
-                log.info("Searching for %s receiver...", receiver_type)
-                receivers = enumerate_receivers(receiver_type=receiver_type)
+                path_filter = device_path.encode() if device_path else None
+                if device_path:
+                    log.info("Looking for %s receiver at %s...", receiver_type, device_path)
+                else:
+                    log.info("Searching for %s receiver...", receiver_type)
+                receivers = enumerate_receivers(receiver_type=receiver_type, path_filter=path_filter)
 
                 if not receivers:
-                    log.warning(
-                        "No %s receiver found. Retrying in %ds...",
-                        receiver_type,
-                        DISCOVER_RETRY_INTERVAL,
-                    )
+                    if device_path:
+                        log.warning(
+                            "No %s receiver found at %s. "
+                            "Check the device_path in the add-on configuration. Retrying in %ds...",
+                            receiver_type,
+                            device_path,
+                            DISCOVER_RETRY_INTERVAL,
+                        )
+                    else:
+                        log.warning(
+                            "No %s receiver found. Retrying in %ds...",
+                            receiver_type,
+                            DISCOVER_RETRY_INTERVAL,
+                        )
                     if mqtt_bridge:
                         mqtt_bridge.publish_status("offline")
                     shutdown.wait(DISCOVER_RETRY_INTERVAL)

@@ -20,4 +20,12 @@ export MQTT_PASS="$(bashio::services mqtt 'password')"
 export RECEIVER_TYPE="$(bashio::config 'receiver_type')"
 export LOG_LEVEL="$(bashio::config 'log_level')"
 
+# Optional: user-configured hidraw device path
+if bashio::config.has_value 'device_path'; then
+    export DEVICE_PATH="$(bashio::config 'device_path')"
+    bashio::log.info "Using configured device path: ${DEVICE_PATH}"
+else
+    bashio::log.info "No device path configured — will auto-discover receiver"
+fi
+
 exec python3 -m logi_host

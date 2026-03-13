@@ -156,6 +156,7 @@ class HidDeviceInfo:
 def enumerate_receivers(
     vendor_id: int = LOGITECH_VENDOR_ID,
     receiver_type: str | None = None,
+    path_filter: bytes | None = None,
 ) -> list[HidDeviceInfo]:
     """Find all Logitech Unifying/Bolt receivers connected to the system.
 
@@ -165,6 +166,10 @@ def enumerate_receivers(
     Args:
         vendor_id: USB vendor ID to filter (default: Logitech 0x046D).
         receiver_type: Optional filter — "unifying" or "bolt". None returns all.
+        path_filter: Optional device path to restrict enumeration to (e.g.
+            b"/dev/hidraw2"). When set, only a receiver at this exact path is
+            returned. The path is still validated against the Logitech PID and
+            HID++ usage filters.
 
     Returns:
         List of HidDeviceInfo for matching receivers.
@@ -186,6 +191,8 @@ def enumerate_receivers(
         path = info.path
         pid = info.product_id
 
+        if path_filter is not None and path != path_filter:
+            continue
         if pid not in allowed_pids:
             continue
         if path in result:

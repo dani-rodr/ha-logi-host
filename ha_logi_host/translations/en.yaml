@@ -1,0 +1,20 @@
+configuration:
+  receiver_type:
+    name: Receiver type
+    description: >-
+      Type of Logitech USB receiver plugged into the host.
+      Use "unifying" for the Logitech Unifying Receiver (orange star logo)
+      or "bolt" for the newer Logi Bolt receiver (green logo).
+  device_path:
+    name: Device path (optional)
+    description: >-
+      Path to the hidraw device for the receiver, e.g. /dev/hidraw2.
+      Leave empty to auto-discover the receiver.
+      Set this if auto-discovery picks the wrong device or you have
+      multiple Logitech receivers. You can find the correct path in
+      the add-on logs when it starts with auto-discovery.
+  log_level:
+    name: Log level
+    description: >-
+      Logging verbosity. Use "debug" for troubleshooting,
+      "info" for normal operation.

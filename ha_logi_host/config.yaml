@@ -22,4 +22,5 @@ options:
   log_level: "info"
 schema:
   receiver_type: "list(unifying|bolt)"
+  device_path: "str?"
   log_level: "list(debug|info|warning|error)"
