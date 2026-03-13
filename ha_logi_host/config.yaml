@@ -10,10 +10,7 @@ arch:
 init: false
 startup: system
 boot: auto
-full_access: true
-privileged:
-  - SYS_RAWIO
-apparmor: false
+usb: true
 udev: true
 services:
   - "mqtt:need"
@@ -22,5 +19,5 @@ options:
   log_level: "info"
 schema:
   receiver_type: "list(unifying|bolt)"
-  device_path: "str?"
+  device_path: "device(subsystem=hidraw)?"
   log_level: "list(debug|info|warning|error)"

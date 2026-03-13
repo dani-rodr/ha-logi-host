@@ -6,13 +6,12 @@ configuration:
       Use "unifying" for the Logitech Unifying Receiver (orange star logo)
       or "bolt" for the newer Logi Bolt receiver (green logo).
   device_path:
-    name: Device path (optional)
+    name: Receiver device (optional)
     description: >-
-      Path to the hidraw device for the receiver, e.g. /dev/hidraw2.
-      Leave empty to auto-discover the receiver.
-      Set this if auto-discovery picks the wrong device or you have
-      multiple Logitech receivers. You can find the correct path in
-      the add-on logs when it starts with auto-discovery.
+      Select the hidraw device for the Logitech receiver from the
+      dropdown. Leave unset to auto-discover the receiver. Set this
+      if auto-discovery picks the wrong device or you have multiple
+      Logitech receivers.
   log_level:
     name: Log level
     description: >-
