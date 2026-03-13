@@ -11,7 +11,9 @@ init: false
 startup: system
 boot: auto
 full_access: true
-privileged: true
+privileged:
+  - SYS_RAWIO
+apparmor: false
 udev: true
 services:
   - "mqtt:need"
