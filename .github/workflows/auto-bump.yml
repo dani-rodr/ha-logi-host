@@ -1,0 +1,51 @@
+name: Auto-bump patch version
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  bump:
+    # Skip if this commit was itself an auto-bump (avoid infinite loop)
+    if: "!contains(github.event.head_commit.message, '[auto-bump]')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bump patch version
+        run: |
+          # Read current version from config.yaml
+          current=$(grep '^version:' ha_logi_host/config.yaml | sed 's/version: *"\(.*\)"/\1/')
+          echo "Current version: $current"
+
+          # Split into major.minor.patch and increment patch
+          IFS='.' read -r major minor patch <<< "$current"
+          new_patch=$((patch + 1))
+          new_version="${major}.${minor}.${new_patch}"
+          echo "New version: $new_version"
+
+          # Update config.yaml
+          sed -i "s/^version: \"${current}\"/version: \"${new_version}\"/" ha_logi_host/config.yaml
+
+          # Update __init__.py
+          sed -i "s/__version__ = \"${current}\"/__version__ = \"${new_version}\"/" ha_logi_host/logi_host/__init__.py
+
+          # Verify
+          grep 'version:' ha_logi_host/config.yaml
+          grep '__version__' ha_logi_host/logi_host/__init__.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ha_logi_host/config.yaml ha_logi_host/logi_host/__init__.py
+          # Only commit if there are changes
+          if git diff --cached --quiet; then
+            echo "No version changes to commit"
+          else
+            new_ver=$(grep '^version:' ha_logi_host/config.yaml | sed 's/version: *"\(.*\)"/\1/')
+            git commit -m "Bump version to ${new_ver} [auto-bump]"
+            git push
+          fi
