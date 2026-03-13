@@ -10,5 +10,6 @@ RUN apk add --no-cache \
 COPY requirements.txt /tmp/
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
-COPY logi_host/ /logi_host/
+WORKDIR /app
+COPY logi_host/ /app/logi_host/
 COPY rootfs /
