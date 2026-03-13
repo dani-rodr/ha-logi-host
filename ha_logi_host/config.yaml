@@ -9,16 +9,13 @@ arch:
   - armv7
 startup: system
 boot: auto
-devices: true
-uart: false
-usb: true
-hassio_api: false
-homeassistant_api: false
+full_access: true
+udev: true
 services:
-  - mqtt:need
+  - "mqtt:need"
 options:
   receiver_type: "unifying"
   log_level: "info"
 schema:
-  receiver_type: list(unifying|bolt)
-  log_level: list(debug|info|warning|error)
+  receiver_type: "list(unifying|bolt)"
+  log_level: "list(debug|info|warning|error)"
