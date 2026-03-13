@@ -28,6 +28,9 @@ class TransportError(Exception):
 
 
 # -- Load libhidapi -----------------------------------------------------------
+# Library loading is deferred: if libhidapi is not available, the module can
+# still be imported (for tests, type checking, etc.). Functions that need the
+# library call _ensure_lib() which raises ImportError on first real use.
 
 _LIB_NAMES = [
     "libhidapi-hidraw.so.0",  # Preferred: hidraw backend (non-exclusive)
@@ -39,6 +42,8 @@ _LIB_NAMES = [
 ]
 
 _lib: ctypes.CDLL | None = None
+_lib_initialized = False
+
 for _name in _LIB_NAMES:
     try:
         _lib = ctypes.CDLL(_name)
@@ -47,75 +52,81 @@ for _name in _LIB_NAMES:
     except OSError:
         continue
 
-if _lib is None:
-    raise ImportError(
-        "Cannot load hidapi library. "
-        "Install it with: apk add hidapi (Alpine) or apt install libhidapi-hidraw0 (Debian)"
-    )
+if _lib is not None and not _lib_initialized:
+    _lib_initialized = True
 
-# -- Initialize hidapi ---------------------------------------------------------
+    # -- Initialize hidapi
+    _lib.hid_init.restype = ctypes.c_int
+    _lib.hid_init.argtypes = []
+    _lib.hid_init()
 
-_lib.hid_init.restype = ctypes.c_int
-_lib.hid_init.argtypes = []
-_lib.hid_init()
+    # -- struct hid_device_info (mirrors hidapi.h)
+
+    class _DeviceInfo(ctypes.Structure):
+        pass  # Forward declaration for self-referential struct
+
+    _DeviceInfo._fields_ = [
+        ("path", ctypes.c_char_p),
+        ("vendor_id", ctypes.c_ushort),
+        ("product_id", ctypes.c_ushort),
+        ("serial_number", ctypes.c_wchar_p),
+        ("release_number", ctypes.c_ushort),
+        ("manufacturer_string", ctypes.c_wchar_p),
+        ("product_string", ctypes.c_wchar_p),
+        ("usage_page", ctypes.c_ushort),
+        ("usage", ctypes.c_ushort),
+        ("interface_number", ctypes.c_int),
+        ("next", ctypes.POINTER(_DeviceInfo)),
+    ]
+
+    # -- hidapi function signatures
+    _lib.hid_enumerate.restype = ctypes.POINTER(_DeviceInfo)
+    _lib.hid_enumerate.argtypes = [ctypes.c_ushort, ctypes.c_ushort]
+
+    _lib.hid_free_enumeration.restype = None
+    _lib.hid_free_enumeration.argtypes = [ctypes.POINTER(_DeviceInfo)]
+
+    _lib.hid_open_path.restype = ctypes.c_void_p
+    _lib.hid_open_path.argtypes = [ctypes.c_char_p]
+
+    _lib.hid_close.restype = None
+    _lib.hid_close.argtypes = [ctypes.c_void_p]
+
+    _lib.hid_read_timeout.restype = ctypes.c_int
+    _lib.hid_read_timeout.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_ubyte),
+        ctypes.c_size_t,
+        ctypes.c_int,
+    ]
+
+    _lib.hid_write.restype = ctypes.c_int
+    _lib.hid_write.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_ubyte),
+        ctypes.c_size_t,
+    ]
+
+    _lib.hid_error.restype = ctypes.c_wchar_p
+    _lib.hid_error.argtypes = [ctypes.c_void_p]
+else:
+    if _lib is None:
+        log.warning("hidapi library not found — HID functions will not be available")
 
 
-# -- struct hid_device_info (mirrors hidapi.h) ---------------------------------
-
-
-class _DeviceInfo(ctypes.Structure):
-    pass  # Forward declaration for self-referential struct
-
-
-_DeviceInfo._fields_ = [
-    ("path", ctypes.c_char_p),
-    ("vendor_id", ctypes.c_ushort),
-    ("product_id", ctypes.c_ushort),
-    ("serial_number", ctypes.c_wchar_p),
-    ("release_number", ctypes.c_ushort),
-    ("manufacturer_string", ctypes.c_wchar_p),
-    ("product_string", ctypes.c_wchar_p),
-    ("usage_page", ctypes.c_ushort),
-    ("usage", ctypes.c_ushort),
-    ("interface_number", ctypes.c_int),
-    ("next", ctypes.POINTER(_DeviceInfo)),
-]
-
-# -- hidapi function signatures ------------------------------------------------
-
-_lib.hid_enumerate.restype = ctypes.POINTER(_DeviceInfo)
-_lib.hid_enumerate.argtypes = [ctypes.c_ushort, ctypes.c_ushort]
-
-_lib.hid_free_enumeration.restype = None
-_lib.hid_free_enumeration.argtypes = [ctypes.POINTER(_DeviceInfo)]
-
-_lib.hid_open_path.restype = ctypes.c_void_p
-_lib.hid_open_path.argtypes = [ctypes.c_char_p]
-
-_lib.hid_close.restype = None
-_lib.hid_close.argtypes = [ctypes.c_void_p]
-
-_lib.hid_read_timeout.restype = ctypes.c_int
-_lib.hid_read_timeout.argtypes = [
-    ctypes.c_void_p,
-    ctypes.POINTER(ctypes.c_ubyte),
-    ctypes.c_size_t,
-    ctypes.c_int,
-]
-
-_lib.hid_write.restype = ctypes.c_int
-_lib.hid_write.argtypes = [
-    ctypes.c_void_p,
-    ctypes.POINTER(ctypes.c_ubyte),
-    ctypes.c_size_t,
-]
-
-_lib.hid_error.restype = ctypes.c_wchar_p
-_lib.hid_error.argtypes = [ctypes.c_void_p]
+def _ensure_lib() -> ctypes.CDLL:
+    """Return the loaded hidapi library, or raise ImportError."""
+    if _lib is None:
+        raise ImportError(
+            "Cannot load hidapi library. "
+            "Install it with: apk add hidapi (Alpine) or apt install libhidapi-hidraw0 (Debian)"
+        )
+    return _lib
 
 
 def _hid_err(dev: int | None = None) -> str:
-    msg = _lib.hid_error(dev)
+    lib = _ensure_lib()
+    msg = lib.hid_error(dev)
     return msg if msg else "unknown hidapi error"
 
 
@@ -164,7 +175,8 @@ def enumerate_receivers(
     elif receiver_type == "bolt":
         allowed_pids = (BOLT_PID,)
 
-    head = _lib.hid_enumerate(vendor_id, 0)
+    lib = _ensure_lib()
+    head = lib.hid_enumerate(vendor_id, 0)
     result: dict[bytes, HidDeviceInfo] = {}
     node = head
 
@@ -192,7 +204,7 @@ def enumerate_receivers(
         )
         log.info("Found %s receiver at %s (pid=0x%04X)", result[path].receiver_type, path, pid)
 
-    _lib.hid_free_enumeration(head)
+    lib.hid_free_enumeration(head)
     return list(result.values())
 
 
@@ -206,10 +218,12 @@ class HIDTransport:
     """
 
     def __init__(self, path: bytes, receiver_type: str, pid: int) -> None:
+        lib = _ensure_lib()
         self.path = path
         self.receiver_type = receiver_type
         self.pid = pid
-        self._dev: int | None = _lib.hid_open_path(path)
+        self._lib = lib
+        self._dev: int | None = lib.hid_open_path(path)
         if not self._dev:
             raise TransportError(f"Failed to open {path}: {_hid_err()}")
         log.info("Opened %s receiver (pid=0x%04X) at %s", receiver_type, pid, path)
@@ -223,7 +237,7 @@ class HIDTransport:
         if self._dev is None:
             raise TransportError("read on closed transport")
         buf = (ctypes.c_ubyte * MAX_READ_SIZE)()
-        n = _lib.hid_read_timeout(self._dev, buf, MAX_READ_SIZE, timeout)
+        n = self._lib.hid_read_timeout(self._dev, buf, MAX_READ_SIZE, timeout)
         if n < 0:
             raise TransportError(f"hid_read_timeout failed: {_hid_err(self._dev)}")
         return bytes(buf[:n]) if n > 0 else None
@@ -231,14 +245,14 @@ class HIDTransport:
     def write(self, msg: bytes) -> None:
         """Write one HID packet (first byte must be the report ID)."""
         buf = (ctypes.c_ubyte * len(msg))(*msg)
-        n = _lib.hid_write(self._dev, buf, len(msg))
+        n = self._lib.hid_write(self._dev, buf, len(msg))
         if n < 0:
             raise TransportError(f"hid_write failed: {_hid_err(self._dev)}")
 
     def close(self) -> None:
         """Close the HID device handle."""
         if self._dev is not None:
-            _lib.hid_close(self._dev)
+            self._lib.hid_close(self._dev)
             self._dev = None
             log.info("Closed transport at %s", self.path)
 

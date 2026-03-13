@@ -2,7 +2,7 @@ name: "Logi Host Switch"
 description: "Switch Logitech mouse host via Home Assistant using a Unifying/Bolt USB receiver"
 version: "0.1.0"
 slug: "ha_logi_host"
-url: "https://github.com/you/ha-logi-host"
+url: "https://github.com/dani-rodr/ha-logi-host"
 arch:
   - amd64
   - aarch64
